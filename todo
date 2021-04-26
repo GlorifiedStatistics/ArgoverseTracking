@@ -1,0 +1,5 @@
+1. Find a better norm function
+
+If bad things:
+- check that the labels for validation are in correct order
+- check that the final_pos is correct in dataset (shouldn't be agent_pos)
