@@ -1,5 +1,5 @@
-from Constants import *
-from Datasets import *
+from Argoverse.Datasets import *
+import Argoverse.NormFuncs as NormFuncs
 
 _MAP_INC_START = 100
 _MAP_X_SIZE = 5000
@@ -34,10 +34,6 @@ def draw_map(points, norms, pin, pout):
 
     for c, arr in zip([(255, 0, 0), (0, 255, 0)], [pin, pout]):
         for car in arr:
-            print(len(arr))
-            if car[0][0] == 0:
-                print("AA")
-                break
             for p in car:
                 p = (int(p[0]), int(p[1]))
                 cv2.circle(image, p, 1, c)

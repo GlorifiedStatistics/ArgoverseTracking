@@ -1,0 +1,6 @@
+*.idea*
+*.ipynb_checkpoints*
+data/clean_data*
+data/raw*
+data/models*
+*__pycache__*

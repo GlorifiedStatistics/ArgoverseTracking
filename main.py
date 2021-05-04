@@ -1,46 +1,29 @@
-from Constants import *
-from Datasets import *
 from Visualize import *
-from Models import *
+from ForecastModels.Models import *
 
+from Argoverse.NormFuncs import get_norm_funcs
 
-# data_cleaning_norm_functions()
+def do_model():
 
-def test_models(y_output='full'):
-    models = {
-        'rf_small_noop': RandomForestModel(y_output=y_output, norm_func='noop', max_data=10_000),
-        'rf_small_linear': RandomForestModel(y_output=y_output, norm_func='linear', max_data=10_000),
+    #model = RandomForestModel(max_depth=None, n_estimators=100, max_data=1_000, data_type='step', norm_func='standardize', include_lanes=False, extra_features=False)
+    #model = MLPModel(norm_func='tanh', batch_norm=True, act='tanh', epochs=10, dp=None, hidden_layers=3, batch_size=512, y_norm_func='tanh')
+    #model = MLPModel(norm_func='linear', batch_norm=True, act='sigmoid', epochs=7, dp=None, hidden_layers=3, batch_size=512, loss='mse')
+    #model = LinearRegressionModel(norm_func='noop', data_type='raw')
+    #model = GeneralLinearModel(**{'max_data': 50_000, 'data_type': 'step', 'norm_func': 'standardize', 'power': 0})
+    model = SGDRegressorModel(**{'max_data': None, 'data_type': 'raw', 'norm_func': 'standardize', 'loss': 'huber', 'penalty': 'l1', 'load_model':True})
+    #model = PassiveAggressiveModel(norm_func='std_step', max_data=10_000, data_type='step')
+    #model = KNearestNeighborsModel(k=10, p=1, data_type='step', norm_func='std_step', max_data=10_000)
+    #model = ElasticNetModel(**{'max_data': None, 'data_type': 'step', 'norm_func': 'linear'})
 
-        'rf_big_noop': RandomForestModel(y_output=y_output, norm_func='noop', max_depth=None, n_estimators=300, max_data=100_000),
-        'rf_big_linear': RandomForestModel(y_output=y_output, norm_func='linear', max_depth=None, n_estimators=300, max_data=100_000),
+    #model = AdaBoostModel(max_data=50_000, max_depth=25, data_type='step', norm_func='linear', include_lanes=False)
 
-        'mlp_plain': MLPModel(y_output=y_output, norm_func='linear', epochs=20, hidden_layers=2),
-        'mlp_medium_plain': MLPModel(y_output=y_output, norm_func='linear', epochs=20, hidden_layers=3),
-        'mlp_large_plain': MLPModel(y_output=y_output, norm_func='linear', epochs=20, hidden_layers=4),
-        'mlp_xl_plain': MLPModel(y_output=y_output, norm_func='linear', epochs=20, hidden_layers=6),
-    }
+    #model.train()
+    #model.compute_val()
 
-    ret = {}
+    #model.test_predictions()
 
-    for name, model in models.items():
-        model.train()
-        ret[name] = [model.last_rmse, model.last_real_rmse]
-        print("\n\n\"%s\" rmse: %f, real_rmse: %f\n\n" % (name, model.last_rmse, model.last_real_rmse))
+do_model()
 
-    with open("./model_rmses.pkl", "wb") as f:
-        pickle.dump(ret, f)
+from TestModels import test_models
 
-    return ret
-
-
-#test_models()
-
-model = RandomForestModel(max_depth=20, n_estimators=300, max_data=10_000, norm_func='noop')
-#model = MLPModel(norm_func='std_step', batch_norm=True, act='selu', epochs=100, final_act=None, dp=None, hidden_layers=3, batch_size=512)
-#model = LinearRegressionModel(norm_func='std_step')
-#model = DecisionTreeModel(max_depth=None, max_data=10_000, criterion='poisson')
-
-model.train()
-model.compute_val()
-
-print(np.argsort(model.model.feature_importances_))
+#test_models('best_nn')

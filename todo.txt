@@ -1,0 +1,6 @@
+Do some more feature engineering?
+investigate wrong answers and see if there is a pattern
+Rnn's of different types: encoder-decoder, bidirectional
+Keras Functional model types
+GAN's for motion forecasting
+mixture-of-experts?
