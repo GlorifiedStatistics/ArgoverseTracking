@@ -4,3 +4,4 @@ Rnn's of different types: encoder-decoder, bidirectional
 Keras Functional model types
 GAN's for motion forecasting
 mixture-of-experts?
+include lane information in advanced RNN with autoencoder

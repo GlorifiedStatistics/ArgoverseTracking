@@ -20,3 +20,6 @@ MAX_LANES = 100
 
 # Stats constants
 NUM_STATS_BINS = 10_000
+
+# Miss distance for miss rate
+MISS_DIST = 2

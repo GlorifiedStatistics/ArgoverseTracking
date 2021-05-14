@@ -88,9 +88,9 @@ def inv_std_step(arr, _ss, std_devs=2, vmin=0, vmax=1, std_min=0.25, std_max=0.7
         maxs = np.argwhere(arr[:, i] > std_max).reshape([-1])
         stds = np.argwhere(np.logical_and(arr[:, i] >= std_min, arr[:, i] <= std_max)).reshape([-1])
 
-        ret[:, i][mins] = ((ret[mins][:, i] - vmin) / (std_min - vmin)) * (smin - xmin) + xmin
-        ret[:, i][maxs] = ((ret[maxs][:, i] - std_max) / (vmax - std_max)) * (xmax - smax) + smax
-        ret[:, i][stds] = ((ret[stds][:, i] - std_min) / (std_max - std_min)) * (smax - smin) + smin
+        ret[:, i][mins] = ((ret[mins][:, i].copy() - vmin) / (std_min - vmin)) * (smin - xmin) + xmin
+        ret[:, i][maxs] = ((ret[maxs][:, i].copy() - std_max) / (vmax - std_max)) * (xmax - smax) + smax
+        ret[:, i][stds] = ((ret[stds][:, i].copy() - std_min) / (std_max - std_min)) * (smax - smin) + smin
 
     return ret
 
@@ -158,11 +158,11 @@ def _fix_dimensions(func):
         if data_type == 'step':
             p = arr[:t].copy().reshape(s)
             p[0, :, :] = func(p[0, :, :], stats['p_off'], **kwargs)
-            p[1:, :, :] = func(p[1:, :, :], stats['p_step'], **kwargs)
+            p[1:, :, :] = func(p[1:, :, :].reshape([-1, 2]), stats['p_step'], **kwargs).reshape([18, 60, 2])
 
             v = arr[t:f].copy().reshape(s)
-            v[0, :, :] = func(v[0, :, :], stats['p_off'], **kwargs)
-            v[1:, :, :] = func(v[1:, :, :], stats['p_step'], **kwargs)
+            v[0, :, :] = func(v[0, :, :], stats['v_off'], **kwargs)
+            v[1:, :, :] = func(v[1:, :, :].reshape([-1, 2]), stats['v_step'], **kwargs).reshape([18, 60, 2])
 
             ret[:t] = p.reshape([-1])
             ret[t:f] = v.reshape([-1])

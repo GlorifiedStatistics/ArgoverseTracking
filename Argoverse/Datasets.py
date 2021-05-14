@@ -84,7 +84,7 @@ def load_dataset(norm_func=None, data_type='step', include_lanes=True, max_data=
         return l()
     except FileNotFoundError:
         print("Could not find cleaned data files, redo-ing...")
-        combine_data()
+        combine_data(data_type)
         try:
             return l()
         except FileNotFoundError as e:
