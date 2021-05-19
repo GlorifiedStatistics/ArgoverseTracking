@@ -25,7 +25,7 @@ def load_dataset(norm_func=None, data_type='step', include_lanes=True, max_data=
     :param norm_func: the function to normalize data
     :param data_type: the type of the data. 'step' if we want the data to be step values, 'raw' for raw values
     :param include_lanes: whether or not to include lane information
-    :param max_data: the max number of rows in both train and test sets
+    :param max_data: the max number of rows in both train and other sets
     :param extra_features: if True, then add some extra features to the dataset (see _add_features() for the
         added features)
     :param y_norm_func: if not None, then the train_y and test_y will have use this as a normalization function
@@ -156,6 +156,10 @@ def combine_data(data_type='step'):
                 v[0, :num_cars, :] -= v[0, 0, :]
                 s[1:, :num_cars] -= s[:-1, :num_cars]
 
+                lane -= agent_pos
+
+            elif data_type == 'agent':
+                p[:, :num_cars, :] -= agent_pos
                 lane -= agent_pos
 
             tl = np.zeros([MAX_LANES * 2])

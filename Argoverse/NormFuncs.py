@@ -139,9 +139,8 @@ def _fix_dimensions(func):
     """
 
     def _ret(arr, stats, data_type='step', **kwargs):
-        if data_type not in ['step', 'raw']:
-            raise ValueError("Norm func data_type must be either 'step' or 'raw'"
-                             )
+        if data_type not in ['step', 'raw', 'agent']:
+            raise ValueError("Norm func data_type must be either 'step' or 'raw' or 'agent'")
         if len(arr.shape) > 2:
             raise ValueError("Norm func data must be either 1 or 2 dimensional.")
 
@@ -167,6 +166,10 @@ def _fix_dimensions(func):
             ret[:t] = p.reshape([-1])
             ret[t:f] = v.reshape([-1])
 
+        elif data_type == 'agent':
+            ret[:t] = func(arr[:t], stats['p_agent'], **kwargs)
+            ret[t:f] = func(arr[t:f], stats['v_raw'], **kwargs)
+
         else:
             ret[:t] = func(arr[:t], stats['p_raw'], **kwargs)
             ret[t:f] = func(arr[t:f], stats['v_raw'], **kwargs)
@@ -174,7 +177,8 @@ def _fix_dimensions(func):
         ls = f + 2 * MAX_LANES
         le = ls + 2 * MAX_LANES
         if len(arr) == le or len(arr) == le + 19 * 60:
-            ret[f:ls] = func(arr[f:ls].reshape([-1, 2]), stats['lane_' + data_type], **kwargs).reshape([-1])
+            ret[f:ls] = func(arr[f:ls].reshape([-1, 2]), stats['lane_' + ('raw' if data_type == 'raw' else 'step')],
+                             **kwargs).reshape([-1])
             ret[ls:le] = func(arr[ls:le].reshape([-1, 2]), stats['lane_norm'], **kwargs).reshape([-1])
 
         _s1 = len(arr) == le + 19 * 60
@@ -187,7 +191,7 @@ def _fix_dimensions(func):
             stats['speed']['std'][1] = 1
             s[0, :] = func(np.hstack((s[0:1, :].T, np.zeros([60, 1]))), stats['speed_start'], **kwargs)[:, 0].reshape([-1])
             s[1:, :] = func(np.hstack((s[1:, :].reshape([-1, 1]), np.zeros([18*60, 1]))),
-                            stats['speed' if data_type == 'raw' else 'speed_step'], **kwargs)[:, 0].reshape([18, 60])
+                            stats['speed_step' if data_type == 'step' else 'speed'], **kwargs)[:, 0].reshape([18, 60])
             _idx = le if _s1 else f
             ret[_idx:_idx + 19 * 60] = s.reshape([-1])
 

@@ -151,10 +151,6 @@ class ForecastModel:
         name = self.__class__.__name__ + "_" + self.name
         save_predictions(self.best_val_pred, name, self.val_labels)
 
-    def _input_shape(self):
-        return (19 * 60 * 4 + (4 * MAX_LANES if self.include_lanes else 0) +
-                (19 * 60 if self.extra_features else 0),)
-
     def save(self):
         raise NotImplementedError()
 

@@ -3,76 +3,56 @@ from ForecastModels.NNModels import *
 
 class RNNEncoderDecoderModel(RNNModel):
     def _gen_model(self):
-        # Set up the RNN layers
-        lane_input = Input(shape=self._input_shape()[1]) if self.include_lanes else None
+        class _M(nn.Module):
+            def __init__(self, input_size, rnn_size, num_rnn_layers, rnn_dp, bi, act, dp, include_lanes):
+                super().__init__()
+                input_size, *lane_size = input_size
+                self.rnn_size = rnn_size
+                self.bi = bi
+                self.num_rnn_layers = num_rnn_layers
+                self.encoder = nn.LSTM(input_size[1], hidden_size=rnn_size, dropout=rnn_dp,
+                                       bidirectional=bi, batch_first=True, num_layers=num_rnn_layers)
+                self.decoder = nn.LSTM(rnn_size * (2 if bi else 1) + (4 * MAX_LANES if include_lanes else 0),
+                                       hidden_size=rnn_size, dropout=rnn_dp, bidirectional=bi, batch_first=True,
+                                       num_layers=num_rnn_layers)
+                rs = self.rnn_size * (2 if bi else 1)
+                self.ff1 = nn.Linear(rs, 512) if include_lanes else nn.Linear(rs, 512)
+                self.ff2 = nn.Linear(512, 256)
+                self.ff3 = nn.Linear(256, 60)
+                self.bn1 = nn.BatchNorm1d(512)
+                self.bn2 = nn.BatchNorm1d(256)
+                self.dp = dp
+                self.act = act
+                self.include_lanes = include_lanes
 
-        rnn_input = Input(shape=self._input_shape()[0])
-        encoder = self._rnn_layer(rnn_input)
-        att_enc = Flatten()(KerasAttention()(encoder)) if self.attention else encoder
-        concat = concatenate([att_enc, lane_input]) if self.include_lanes else att_enc
-        state = RepeatVector(30)(concat)
-        decoder = self._rnn_layer(state, seq=True)
+            def forward(self, *args):
+                def _dp(v):
+                    return nn.Dropout(self.dp)(v) if self.dp is not None and self.dp > 0 else v
 
-        output_layer = Flatten()(self._add_layers(decoder, self.cell_neurons, 2, time_distributed=True))
+                x, *other = args
 
-        return self._finalize_model([rnn_input, lane_input] if self.include_lanes else rnn_input, output_layer)
+                h0 = torch.zeros(self.num_rnn_layers * (2 if self.bi else 1), x.size(0), self.rnn_size).requires_grad_()
+                c0 = torch.zeros(self.num_rnn_layers * (2 if self.bi else 1), x.size(0), self.rnn_size).requires_grad_()
+                h0, c0 = h0.to(DEVICE), c0.to(DEVICE)
 
+                x, (hn, cn) = self.encoder(x, (h0.detach(), c0.detach()))
+                x = x[:, -1, :].contiguous().view(-1, self.rnn_size * (2 if self.bi else 1))
 
-class Seq2SeqModel(RNNModel):
-    def __init__(self, **kwargs):
-        kwargs['include_lanes'] = False
-        super().__init__(**kwargs)
+                if self.include_lanes:
+                    x = torch.cat((x, other[0]), dim=1)
 
-        # Insert a x,y column of zeros for initial input to decoder, and only go up to penultimate time step
+                s = x.shape[-1]
+                x = x.repeat([1, 30]).view([-1, 30, s])
 
-    def _conv_data(self, data):
-        data = super()._conv_data(data)
-        train_y_decoder = np.append(np.zeros([data['train_y'].shape[0], 2]), data['train_y'][:, :-2], axis=1)
-        data['train_x'] = [data['train_x'], train_y_decoder.reshape([-1, 30, 2])]
-        return data
+                # Use the states from encoder with gradients including encoder
+                x, (hn, cn) = self.decoder(x, (hn, cn))
+                x = x[:, -1, :].contiguous().view(-1, self.rnn_size * (2 if self.bi else 1))
 
-    def _gen_model(self):
-        """
-        Code adapted from:
-        https://machinelearningmastery.com/define-encoder-decoder-sequence-sequence-model-neural-machine-translation-keras/
-        """
-        # Set up the RNN layers
+                x = _dp(self.act(self.bn1(self.ff1(x))))
+                x = _dp(self.act(self.bn2(self.ff2(x))))
+                x = self.act(self.ff3(x))
 
-        encoder_input = Input(shape=self._input_shape()[0])
-        encoder, *encoder_states = self._rnn_layer(state=True)(encoder_input)
+                return x
 
-        decoder_inputs = Input(shape=(None, 2))
-        decoder_rnn_layer = self._rnn_layer(seq=True, state=True)
-        decoder_outputs, *_ = decoder_rnn_layer(decoder_inputs, initial_state=encoder_states)
-        decoder_dense = Dense(2, activation=self.act)
-        decoder_outputs = Flatten()(decoder_dense(decoder_outputs))
-
-        model = self._finalize_model([encoder_input, decoder_inputs], decoder_outputs)
-
-        self.encoder_model = Model(encoder_input, encoder_states)
-        # define decoder inference model
-        decoder_states_inputs = [Input(shape=(self.cell_neurons,)), Input(shape=(self.cell_neurons,))]
-        decoder_outputs, *decoder_states = decoder_rnn_layer(decoder_inputs, initial_state=decoder_states_inputs)
-        decoder_outputs = decoder_dense(decoder_outputs)
-        self.decoder_model = Model([decoder_inputs] + decoder_states_inputs, [decoder_outputs] + decoder_states)
-
-        return model
-
-    def _predict(self, X):
-        if isinstance(self.model, str):
-            self.model = self.load()
-
-        curr_states = self.encoder_model.predict(X)
-        target_seq = np.zeros((len(X), 1, 2))
-
-        model_output = np.zeros((len(X), 60))
-        for i in range(30):
-            pred, *curr_states = self.decoder_model.predict([target_seq] + curr_states)
-
-            # Update the target sequence and current states
-            target_seq = pred.copy()
-
-            model_output[:, i * 2: (i + 1) * 2] = pred.reshape([-1, 2])
-
-        return model_output
-
+        return _M(self._input_sizes(), self.rnn_size, self.num_rnn_layers, self.rnn_dp, self.bidirectional, self.act,
+                  self.dp, self.include_lanes)

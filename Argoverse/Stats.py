@@ -35,7 +35,7 @@ def load_stats(redo=False):
     # We want this here in case I wish to change MIN_NORMALIZE_VAL etc.
     for k, d in stats.items():
         for key in d.keys():
-            if key in ['num_lanes', 'size']:
+            if key in ['lane_sizes', 'size']:
                 continue
             d[key]['range'] = d[key]['max'] - d[key]['min']
 
@@ -88,7 +88,8 @@ def generate_dataset_statistics(save_stats=True):
         p_raw, v_raw, p_step, v_step, p_off, v_off, speed, speed_step, speed_start = [], [], [], [], [], [], [], [], []
         p_in_raw, p_out_raw, p_in_step, p_out_step, v_in_raw, v_out_raw, v_in_step, v_out_step = [], [], [], [], [], [], [], []
         lane_raw, lane_step, lane_norm = [], [], []
-        num_lanes = np.zeros([10])
+        lane_sizes = []
+        p_agent = []
 
         for i in progressbar.progressbar(range(len(files))):
             file = files[i]
@@ -126,6 +127,10 @@ def generate_dataset_statistics(save_stats=True):
 
             p_init = p[0, 0, :].copy()
 
+            # Do the agent offset one for all data
+            pa = p - p_init
+            p_agent.append(pa.copy())
+
             # Build the steps and offsets
             p[1:] -= p[:-1]
             v[1:] -= v[:-1]
@@ -151,17 +156,13 @@ def generate_dataset_statistics(save_stats=True):
             lane_step.append((data['lane'][:, :2] - p_init).copy())
             lane_norm.append(data['lane_norm'][:, :2].copy())
 
-            if len(num_lanes) <= len(data['lane']):
-                temp = num_lanes.copy()
-                num_lanes = np.zeros([len(data['lane']) + 1])
-                num_lanes[:len(temp)] += temp
-            num_lanes[len(data['lane'])] += 1
+            lane_sizes.append(len(data['lane']))
 
         k = 'train' if folder_path == TRAINING_PATH else 'val'
         vals[k] = {'p_raw': p_raw, 'v_raw': v_raw, 'p_step': p_step, 'v_step': v_step, 'p_off': p_off, 'v_off': v_off,
-                   'lane_raw': lane_raw, 'lane_step': lane_step, 'lane_norm': lane_norm, 'num_lanes': num_lanes,
+                   'lane_raw': lane_raw, 'lane_step': lane_step, 'lane_norm': lane_norm, 'lane_sizes': lane_sizes,
                    'speed': speed, 'speed_step': speed_step, 'speed_start': speed_step, 'p_in_step': p_in_step,
-                   'v_in_step': v_in_step, 'p_in_raw': p_in_raw, 'v_in_raw': v_in_raw}
+                   'v_in_step': v_in_step, 'p_in_raw': p_in_raw, 'v_in_raw': v_in_raw, 'p_agent': p_agent}
         if folder_path == TRAINING_PATH:
             vals[k].update({'p_out_step': p_out_step, 'v_out_step': v_out_step, 'p_out_raw': p_out_raw,
                             'v_out_raw': v_out_raw})
@@ -177,7 +178,7 @@ def generate_dataset_statistics(save_stats=True):
     def _make_stats(ds):
         _ret = {}
         for k in ds.keys():
-            if k in ['num_lanes']:
+            if k in ['lane_sizes']:
                 _ret[k] = ds[k]
                 continue
             # Concatenate arrays
@@ -201,9 +202,7 @@ def generate_dataset_statistics(save_stats=True):
             vals['train'][k] = [vals['train'][k]]
 
     ret['all'] = _make_stats(vals['train'])
-    ret['all']['num_lanes'] = np.zeros([max(len(ret['all']['num_lanes'][0]), len(ret['all']['num_lanes'][1]))])
-    for a in [vals['train']['num_lanes'][i] for i in range(2)]:
-        ret['all']['num_lanes'][:len(a)] += a
+    ret['all']['lane_sizes'] = vals['train']['lane_sizes'] + vals['val']['lane_sizes']
 
     ret['train']['size'] = sizes[0]
     ret['val']['size'] = sizes[1]
