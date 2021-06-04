@@ -1,6 +1,5 @@
-from ForecastModels.SKLearnModels import RandomForestModel, LinearRegressionModel, ElasticNetModel, GeneralLinearModel,\
-    SGDRegressorModel, PassiveAggressiveModel, AdaBoostModel, GaussianProcessModel, KNearestNeighborsModel, \
-    KernelRidgeModel, DecisionTreeModel
-from ForecastModels.NNModels import MLPModel, RNNModel, ResnetModel
-from ForecastModels.AdvancedNNModels import RNNEncoderDecoderModel
-
+from ForecastModels.SKLearnModels import RandomForestModel, DecisionTreeModel, LinearRegressionModel, ElasticNetModel, \
+    GeneralLinearModel, PassiveAggressiveModel, SGDRegressorModel, AdaBoostModel, XGBRegressorModel, \
+    GaussianProcessModel, KernelRidgeModel, KNearestNeighborsModel
+from ForecastModels.PytorchModels.BasicRNN import BasicRNNModel
+from ForecastModels.PytorchModels.MLP import MLPModel

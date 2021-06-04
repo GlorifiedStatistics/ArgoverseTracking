@@ -2,113 +2,155 @@
 Load in and clean data for datasets
 """
 from utils.Utils import *
-from Argoverse.Stats import load_stats
-from Argoverse.NormFuncs import get_norm_funcs
-from sklearn.model_selection import train_test_split as tts
+
+_NAMES = ['p', 'v', 's', 'lane', 'agent_pos']
 
 
-def _cdp(data_type):
+def load_dataset(p=True, v=True, s=False, lanes=False, agent_pos=False, all_data=False, fill_data=True,
+                 max_lanes=100000, train=True, val=True, flatten=False, max_data=None, redo=False, depth=None):
     """
-    _combined_data_path
-    Returns the path to the combined data file for the given data_type
-    :param data_type: either 'step' or 'raw'
+    Loads the dataset. Combines all of the data if that has not yet been done.
+    :param p: whether or not to load the position data
+    :param v: whether or not to load the velocity data
+    :param s: whether or not to load the speed data
+    :param lanes: whether or not to load the lane data
+    :param agent_pos: whether or not to load the initial agent positions data
+    :param all_data: if True, loads all data regardless of other parameters
+    :param fill_data: if True, fills all of the [p, v, s] data so there are 60 cars each time step (fills empty
+        cars with all 0's), and makes the lane data a (num_datapoints, max_lanes) array with empty lanes filled with
+        0's as well. Then, combines all of this data together so d['p'] is a now the numpy array of all data, and
+        d['scene_idx'] is the full list of scene indices that is the same across all datas.
+
+        if False, returns all of the data as it is read in from files
+    :param max_lanes: if None, then is set to the largest number of lanes in any scene. Otherwise is an integer for
+        max number of lanes to keep from each scene, ordered by closest to initial agent position
+    :param train: whether or not to load the training data
+    :param val: whether or not to load the validation data
+    :param flatten: if True, flattens all of the incoming data so each data is a 1d array (or 2d if fill_data is True)
+    :param max_data: the maximum number of examples to choose at random
+    :param redo: if True, combines all of the data again no matter what
+    :param depth: SHOULD NOT BE USED BY THE CALLER, is used to keep track of whether or not we have attempted to load
+        data so we don't fall into an infinite loop if something doesn't load correctly
+
+    :return: a list of all of the different datas loaded (train and/or val), each as a dictionary
     """
-    if not os.path.exists(CLEAN_DATA_PATH):
-        os.mkdir(CLEAN_DATA_PATH)
-    return CLEAN_DATA_PATH + "/%s%s" % (data_type, NUMPY_FILE_EXT)
+    if depth is not None:
+        raise FileNotFoundError()
 
+    print("Loading data...")
 
-def load_dataset(norm_func=None, data_type='step', include_lanes=True, max_data=None, extra_features=False,
-                 y_norm_func=None, redo=False, **kwargs):
-    """
-    Loads the cleaned dataset, then normalizes based on norm_func.
-    :param norm_func: the function to normalize data
-    :param data_type: the type of the data. 'step' if we want the data to be step values, 'raw' for raw values
-    :param include_lanes: whether or not to include lane information
-    :param max_data: the max number of rows in both train and other sets
-    :param extra_features: if True, then add some extra features to the dataset (see _add_features() for the
-        added features)
-    :param y_norm_func: if not None, then the train_y and test_y will have use this as a normalization function
-        instead of norm_func
-    :param redo: whether or not to redo the data
-    :return: 5-tuple of train_x, train_y, test_x, test_y, val_x, val_labels
-    """
-    print("Loading dataset...")
+    if redo:
+        print("Redoing data...")
+        combine_data()
 
-    stats = load_stats()['all']
-    norm_func = get_norm_funcs(norm_func)[0]
-    y_norm_func = get_norm_funcs(y_norm_func)[0] if y_norm_func is not None else norm_func
+    _dict_inputs = [p, v, s, lanes, agent_pos]
 
-    # To easily return the data
-    def l():
-        with open(_cdp(data_type), 'rb') as f:
-            tr_x, tr_y, tx, ty, t_po, tx_o, v, v_po, vl = pickle.load(f)
+    # In case some idiot doesn't want any data
+    if not any(_dict_inputs):
+        return None
 
-        if max_data is not None:
-            tr_x = tr_x[:max_data]
-            tr_y = tr_y[:max_data]
-            tx = tx[:max_data]
-            ty = ty[:max_data]
-            t_po = t_po[:max_data]
-
-        if not include_lanes and not extra_features:
-            end = 19 * 60 * 4
-            tr_x, tx, v = tr_x[:, :end], tx[:, :end], v[:, :end]
-
-        elif include_lanes and not extra_features:
-            end = 19 * 60 * 4 + 4 * MAX_LANES
-            tr_x, tx, v = tr_x[:, :end], tx[:, :end], v[:, :end]
-
-        elif not include_lanes and extra_features:
-            e1, s1 = 19 * 60 * 4, 19 * 60 * 4 + 4 * MAX_LANES
-            tr_x = np.append(tr_x[:, :e1], tr_x[:, s1:], axis=1)
-            tx = np.append(tx[:, :e1], tx[:, s1:], axis=1)
-            v = np.append(v[:, :e1], v[:, s1:], axis=1)
-
-        print("Normalizing data...")
-        keys = ['train_x', 'train_y', 'test_x', 'test_y', 'val_x', 'test_pred_off', 'test_x_off', 'val_pred_off',
-                'val_labels']
-        ret = {}
-        for k, a in zip(keys[:5], [tr_x, tr_y, tx, ty, v]):
-            if k[-1] == 'y':
-                ret[k] = y_norm_func(a, stats, **kwargs)
-            else:
-                ret[k] = norm_func(a, stats, **kwargs)
-        ret.update({k:v for k, v in zip(keys[5:], [t_po, tx_o, v_po, vl])})
-        return ret, stats
-
-    # For checking to make sure the initial clean data file exists
     try:
-        if redo:
-            raise FileNotFoundError()
-        return l()
+        def _load(name, _train):
+            with open(_get_data_path(name, _train), 'rb') as f:
+                return pickle.load(f)
+
+        ret = []
+        _ml = min(max_lanes, 1899)
+        for is_training_path in [p for p, b in zip([True, False], [train, val]) if b]:
+            loads = _NAMES if all_data else [n if b else None for n, b in zip(_NAMES, _dict_inputs)]
+            d = {n: _load(n, is_training_path) for n in loads if n is not None}
+
+            _d_main_keys = list(d.keys())
+            _big_keys = list(d[_d_main_keys[0]].keys())
+            if "name" in _big_keys:
+                _big_keys.remove("name")
+            np.random.shuffle(_big_keys)
+            _keys = _big_keys[:max_data] if max_data is not None else _big_keys
+
+            # Fill the data if we need to
+            if fill_data:
+
+                # Change all the p, v, and s data
+                for k in [k for k in ['p', 'v', 's'] if k in d.keys()]:
+                    shape = d[k][_keys[0]].shape[-1] if len(d[k][_keys[0]].shape) > 2 else 1
+                    new_data = np.zeros([len(_keys), 49 if is_training_path else 19, 60, shape])
+
+                    for i, scene_idx in enumerate(_keys):
+                        num_cars = d[k][scene_idx].shape[1]
+                        new_data[i, :, :num_cars, :] = d[k][scene_idx].reshape(
+                            [49 if is_training_path else 19, num_cars, shape])
+
+                    d[k] = new_data.reshape([len(_keys), -1]) if flatten else new_data
+
+                # Fill the lanes
+                if 'lane' in d.keys():
+                    new_lane = np.zeros([len(_keys), 4 * _ml])
+
+                    for i, k in enumerate(_keys):
+                        _len = len(d['lane'][k]['lane'])
+                        new_lane[i, :_len * 2] = d['lane'][k]['lane'].reshape([-1])
+                        new_lane[i, _ml * 2:_ml * 2 + _len * 2] = d['lane'][k]['lane_norm'].reshape([-1])
+
+                    d['lane'] = new_lane
+
+                # Set the new scene_idx's
+                d['scene_idx'] = np.array(_keys)
+                if 'agent_pos' in d.keys():
+                    d['agent_pos'] = np.array([d['agent_pos'][k] for k in _keys])
+
+            # If we are not filling, we still have to do max_data things.
+            if max_data is not None and not fill_data:
+
+                # Do things faster
+                small = max_data < len(d[_d_main_keys[0]].keys()) * 0.45
+                for k in _d_main_keys:
+                    if small:  # Experimentally, this is the best cutoff
+                        d[k] = {_k: d[k][_k] for _k in _keys}
+                    else:
+                        for _bk in _big_keys[max_data:]:
+                            del d[k][_bk]
+
+            ret.append(d)
+
+        print("Loaded!")
+        return ret
+
     except FileNotFoundError:
-        print("Could not find cleaned data files, redo-ing...")
-        combine_data(data_type)
         try:
-            return l()
-        except FileNotFoundError as e:
-            print("Error reading in cleaned data files:", e)
+            print("Couldn't load data, remaking it...")
+            combine_data()
+            return load_dataset(*locals())  # Kinda a hack but a good one at that
+        except FileNotFoundError:
+            raise FileNotFoundError("Error: Could not load the data")
 
 
-def combine_data(data_type='step'):
+def _get_data_path(name, train):
+    return os.path.join(CLEAN_TRAINING_PATH if train else CLEAN_VALIDATION_PATH, name + ".pkl")
+
+
+def combine_data():
     """
-    Combines all the data into a single file.
-    :param data_type: the type of the data. 'step' if we want the data to be step values, 'raw' for raw values
-    """
-    print("Cleaning datasets...")
+    Combines all the data into a single file for each section of data. Sections are:
+        - p: the position values
+        - v: the velocity values
+        - s: the speed values
+        - agent_pos: the agent initial positions
+        - lanes: the lane information
 
-    out = None
-    val_labels = []
+    Does this in two different folders: one for training and one for validation
+    Each one of these files is a dictionary with keys being the scene indices, and values the data
+    All of the data is in agent coordinates by default
+    """
+    print("Combining datasets...")
 
     for folder_path in [TRAINING_PATH, VALIDATION_PATH]:
         print("Reading in data:", folder_path)
         files = os.listdir(folder_path)
 
-        X = np.empty([len(files), 19 * 60 * 4 + 4 * MAX_LANES + 19 * 60])
-        Y = np.empty([len(files), 60])
-        pred_off = np.empty([len(files), 2])
-        test_off = np.empty([len(files), 2])
+        all_p, all_v, all_s, all_lanes, all_agent_pos = {}, {}, {}, {}, {}
+        _dicts = [all_p, all_v, all_s, all_lanes, all_agent_pos]
+        for d, n in zip(_dicts, _NAMES):
+            d['name'] = n
 
         for i in progressbar.progressbar(range(len(files))):
             file = files[i]
@@ -126,62 +168,28 @@ def combine_data(data_type='step'):
             else:
                 p = data['p_in']
                 v = data['v_in']
-                val_labels.append(data['scene_idx'])
 
             # Swap the axes, and set agent car to first index
             p[[0, a_idx], :, :] = p[[a_idx, 0], :, :]
             v[[0, a_idx], :, :] = v[[a_idx, 0], :, :]
-            p = np.swapaxes(p, 0, 1)
-            v = np.swapaxes(v, 0, 1)
+            p = np.swapaxes(p, 0, 1)[:, :num_cars, :]
+            v = np.swapaxes(v, 0, 1)[:, :num_cars, :]
+
+            agent_pos = p[0, 0, :].copy()
+            p -= agent_pos
 
             s = np.sum(v**2, axis=2) ** 0.5
 
-            # Get the closest MAX_LANES lane data (closest to initial agent_pos)
-            lane = data['lane'][:, :2]
+            lane = data['lane'][:, :2] - agent_pos
             lane_norm = data['lane_norm'][:, :2]
-            lane_cutoff = min(len(lane), MAX_LANES)
-            lane_keeps = np.argsort(np.sum((lane - p[0, 0, :])**2, axis=1)**0.5)[:lane_cutoff]
 
-            lane = lane[lane_keeps]
-            lane_norm = lane_norm[lane_keeps]
+            _data = [p, v, s, {'lane': lane, 'lane_norm': lane_norm}, agent_pos]
+            for _d, _dict in zip(_data, _dicts):
+                _dict[data['scene_idx']] = _d
 
-            agent_pos = p[0, 0, :].copy()
-            pred_off[i] = p[18, 0, :].copy()
-            test_off[i] = p[0, 0, :].copy()
-
-            if data_type == 'step':
-                p[1:, :num_cars, :] -= p[:-1, :num_cars, :]
-                p[0, :num_cars, :] -= agent_pos  # we do this after changing to deltas
-                v[1:, :num_cars, :] -= v[:-1, :num_cars, :]
-                v[0, :num_cars, :] -= v[0, 0, :]
-                s[1:, :num_cars] -= s[:-1, :num_cars]
-
-                lane -= agent_pos
-
-            elif data_type == 'agent':
-                p[:, :num_cars, :] -= agent_pos
-                lane -= agent_pos
-
-            tl = np.zeros([MAX_LANES * 2])
-            tln = np.zeros([MAX_LANES * 2])
-            tl[:len(lane) * 2] = lane.reshape([-1])
-            tln[:len(lane) * 2] = lane_norm.reshape([-1])
-            lane, lane_norm = tl, tln
-
-            X[i] = np.concatenate([p[:19].reshape([-1]), v[:19].reshape([-1]), lane.reshape([-1]),
-                                   lane_norm.reshape([-1]), s[:19].reshape([-1])])
-            if folder_path == TRAINING_PATH:
-                Y[i] = p[19:, 0, :].reshape([-1])
-
-        if folder_path == TRAINING_PATH:
-            tr_x, tx, tr_y, ty, _, tpo, _, toff = tts(X, Y, pred_off, test_off, test_size=0.2,
-                                                      random_state=RANDOM_STATE)
-            out = [a.copy() for a in [tr_x, tr_y, tx, ty, tpo, toff]]
-        else:
-            out += [X.copy(), pred_off.copy(), np.array(val_labels)]
-
-    print("Saving numpy arrays...")
-    with open(_cdp(data_type), 'wb') as f:
-        pickle.dump(out, f)
+        print("Saving data...")
+        for d, name in zip(_dicts, _NAMES):
+            with open(_get_data_path(name, folder_path == TRAINING_PATH), 'wb') as f:
+                pickle.dump(d, f)
 
     print("Datasets cleaned!")

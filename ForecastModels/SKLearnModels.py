@@ -7,17 +7,13 @@ from sklearn.linear_model import LinearRegression, MultiTaskElasticNet, TweedieR
     PassiveAggressiveRegressor
 from sklearn.multioutput import MultiOutputRegressor
 from sklearn.neighbors import KNeighborsRegressor
+from xgboost import XGBRegressor
 
 
 class SKLearnModel(ForecastModel):
     def __init__(self, n_jobs=20, max_data=10_000, norm_func='noop', **kwargs):
-        super().__init__(norm_func, n_jobs=n_jobs, max_data=max_data, **kwargs)
-
-    def _gen_model(self, **kwargs):
-        pass
-
-    def _train_model(self):
-        self.model.fit(self.data['train_x'], self.data['train_y'])
+        self.n_jobs = n_jobs
+        super().__init__(norm_func=norm_func, max_data=max_data, **kwargs)
 
     def save(self):
         with open(self._model_path(), 'wb') as f:
@@ -30,88 +26,98 @@ class SKLearnModel(ForecastModel):
 
 class RandomForestModel(SKLearnModel):
     def __init__(self, n_estimators=100, max_depth=20, **kwargs):
-        super().__init__(n_estimators=n_estimators, max_depth=max_depth, **kwargs)
-        self.name = "_".join([str(n_estimators), str(max_depth), self.name])
+        self.n_estimators, self.max_depth = n_estimators, max_depth
+        super().__init__(max_depth=max_depth, **kwargs)
+        self.name += "_".join([str(n_estimators), str(max_depth)])
 
-    def _gen_model(self, **kwargs):
-        return RandomForestRegressor(n_estimators=kwargs['n_estimators'], max_depth=kwargs['max_depth'],
-                                     n_jobs=kwargs['n_jobs'])
+    def _gen_model(self):
+        return RandomForestRegressor(n_estimators=self.n_estimators, max_depth=self.max_depth, n_jobs=self.n_jobs)
 
 
 class DecisionTreeModel(SKLearnModel):
     def __init__(self, max_depth=20, **kwargs):
-        super().__init__(max_depth=max_depth, **kwargs)
-        self.name = "_".join([str(max_depth), self.name])
+        self.max_depth = max_depth
+        super().__init__(**kwargs)
+        self.name += "_" + str(max_depth)
 
-    def _gen_model(self, **kwargs):
-        return DecisionTreeRegressor(max_depth=kwargs['max_depth'])
+    def _gen_model(self):
+        return DecisionTreeRegressor(max_depth=self.max_depth)
 
 
 class LinearRegressionModel(SKLearnModel):
-    def _gen_model(self, **kwargs):
-        return LinearRegression(n_jobs=kwargs['n_jobs'])
+    def _gen_model(self):
+        return LinearRegression(n_jobs=self.n_jobs)
 
 
 class ElasticNetModel(SKLearnModel):
-    def _gen_model(self, **kwargs):
+    def _gen_model(self):
         return MultiTaskElasticNet()
 
 
 class GeneralLinearModel(SKLearnModel):
     def __init__(self, power=0, max_iter=1_000, **kwargs):
-        super().__init__(power=power, max_iter=max_iter, **kwargs)
-        self.name = "%f_%d" % (power, max_iter) + self.name
+        self.power, self.max_iter = power, max_iter
+        super().__init__(**kwargs)
+        self.name += "_%f_%d" % (power, max_iter)
 
-    def _gen_model(self, **kwargs):
-        return MultiOutputRegressor(TweedieRegressor(power=kwargs['power'], max_iter=kwargs['max_iter']),
-                                    n_jobs=kwargs['n_jobs'])
+    def _gen_model(self):
+        return MultiOutputRegressor(TweedieRegressor(power=self.power, max_iter=self.max_iter), n_jobs=self.n_jobs)
 
 
 class SGDRegressorModel(SKLearnModel):
     def __init__(self, loss='squared_loss', penalty='l2', **kwargs):
-        super().__init__(loss=loss, penalty=penalty, **kwargs)
-        self.name = loss + "_" + self.name
+        self.loss, self.penalty = loss, penalty
+        super().__init__(**kwargs)
+        self.name += "_" + loss
 
-    def _gen_model(self, **kwargs):
-        return MultiOutputRegressor(SGDRegressor(loss=kwargs['loss'], penalty=kwargs['penalty'], max_iter=10_000),
-                                    n_jobs=kwargs['n_jobs'])
+    def _gen_model(self):
+        return MultiOutputRegressor(SGDRegressor(loss=self.loss, penalty=self.penalty, max_iter=10_000),
+                                    n_jobs=self.n_jobs)
 
 
 class PassiveAggressiveModel(SKLearnModel):
-    def _gen_model(self, **kwargs):
-        return MultiOutputRegressor(PassiveAggressiveRegressor(), n_jobs=kwargs['n_jobs'])
+    def _gen_model(self):
+        return MultiOutputRegressor(PassiveAggressiveRegressor(), n_jobs=self.n_jobs)
 
 
 class AdaBoostModel(SKLearnModel):
     def __init__(self, max_depth=20, **kwargs):
-        super().__init__(base=DecisionTreeRegressor(max_depth=max_depth), **kwargs)
-        self.name = str(max_depth) + "_" + self.name
+        self.base = DecisionTreeRegressor(max_depth=max_depth)
+        super().__init__(**kwargs)
+        self.name += "_" + str(max_depth)
 
-    def _gen_model(self, **kwargs):
-        return MultiOutputRegressor(AdaBoostRegressor(base_estimator=kwargs['base']), n_jobs=kwargs['n_jobs'])
+    def _gen_model(self):
+        return MultiOutputRegressor(AdaBoostRegressor(base_estimator=self.base), n_jobs=self.n_jobs)
+
+
+class XGBRegressorModel(SKLearnModel):
+    def _gen_model(self):
+        return MultiOutputRegressor(XGBRegressor(), n_jobs=1)
 
 
 class GaussianProcessModel(SKLearnModel):
-    def _gen_model(self, **kwargs):
+    def _gen_model(self):
         return GaussianProcessRegressor()
 
 
 class KernelRidgeModel(SKLearnModel):
     def __init__(self, kernel='linear', **kwargs):
-        super().__init__(kernel=kernel, **kwargs)
-        self.name = kernel + "_" + self.name
+        self.kernel = kernel
+        super().__init__(**kwargs)
+        self.name += "_" + kernel
 
-    def _gen_model(self, **kwargs):
-        return KernelRidge()
+    def _gen_model(self):
+        return KernelRidge(kernel=self.kernel)
 
 
 class KNearestNeighborsModel(SKLearnModel):
     def __init__(self, k=3, weights='uniform', p=2, **kwargs):
-        super().__init__(k=k, weights=weights, p=p, **kwargs)
-        self.name = str(k) + "_" + weights + "_" + str(p) + "_" + self.name
+        self.k, self.weights, self.p = k, weights, p
+        super().__init__(**kwargs)
+        self.name += "_".join(["", str(k), weights, str(p)])
 
-    def _gen_model(self, **kwargs):
-        return KNeighborsRegressor(kwargs['k'], weights=kwargs['weights'], p=kwargs['p'], n_jobs=kwargs['n_jobs'])
+    def _gen_model(self):
+        return KNeighborsRegressor(self.k, weights=self.weights, p=self.p, n_jobs=self.n_jobs)
 
 
 

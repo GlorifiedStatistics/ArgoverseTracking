@@ -7,6 +7,9 @@ import progressbar
 import matplotlib.pyplot as plt
 from utils.Constants import *
 
+# Seed RNG
+np.random.seed(173986471)
+
 # Make a new print function
 _PRINT = print
 
@@ -21,23 +24,6 @@ def _print(*args):
 
 # Change builtin print in case I want to log to file or anything
 print = _print
-
-
-def _fix_file_ext(filename, ext=NUMPY_FILE_EXT):
-    if '.' in filename:
-        filename = filename[:-filename[::-1].index('.') - 1]
-    return filename + ext
-
-
-def save_numpy(arr, filename):
-    filename = _fix_file_ext(filename)
-    if os.path.exists(filename):
-        os.remove(filename)
-    np.save(filename, arr)
-
-
-def load_numpy(filename):
-    return np.load(_fix_file_ext(filename), allow_pickle=True)
 
 
 def save_predictions(pred, name, labels):

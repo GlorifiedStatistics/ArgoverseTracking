@@ -1,6 +1,9 @@
 from utils.Utils import *
 from Argoverse.Datasets import load_dataset
 from Argoverse.NormFuncs import get_norm_funcs
+from sklearn.model_selection import train_test_split as tts
+
+_UNUSED_KEYS = ['agent_pos', 'scene_idx']
 
 
 def _rmse(y_pred, y_true):
@@ -12,18 +15,25 @@ def _dist(p, y):
 
 
 class ForecastModel:
-    def __init__(self, norm_func='noop', max_data=None, data_type='step', data_and_stats=None, include_lanes=True,
-                 extra_features=False, y_norm_func=None, load_model=False, save_model=False, **nf_kwargs):
-        self.norm_func = norm_func
+    def __init__(self, norm_func=None, max_data=None, data=None, load_model=False, save_model=False,
+                 v=True, s=False, lanes=False, all_data=False, y_norm_func=None, redo=False, **kwargs):
+        if all_data:
+            v = s = lanes = True
+
+        name_strings = [
+            self.__class__.__name__,
+            'all' if max_data is None else str(max_data),
+            str(norm_func), str(v), str(s), str(lanes),
+        ]
+        self.name = "_".join(name_strings)
+
+        self.norm_func = get_norm_funcs(norm_func)
+        self.y_norm_func = get_norm_funcs(y_norm_func) if y_norm_func is not None else self.norm_func
         self.max_data = max_data
-        self.data_type = data_type
-        self.include_lanes = include_lanes
-        self.extra_features = extra_features
-        self.y_norm_func = norm_func if y_norm_func is None else y_norm_func
+
         self.load_model = load_model
         self.save_model = save_model
-        self.nf_kwargs = nf_kwargs
-        self._trained = False
+        self._trained = load_model
         self.rmse = []
         self.real_rmse = []
         self.miss_rate = []
@@ -33,57 +43,84 @@ class ForecastModel:
         self.best_val_pred = None
         self.last_test_pred = None
 
-        inv_y_func = get_norm_funcs(y_norm_func)[1] if y_norm_func else get_norm_funcs(norm_func)[1]
-        self.inv_y_norm_func = lambda pred: inv_y_func(pred, self.stats, data_type=self.data_type, **nf_kwargs)
+        if data is None:
+            data = load_dataset(p=True, v=v, lanes=lanes, s=s, max_data=max_data, fill_data=True, flatten=True,
+                                agent_pos=True, redo=redo)
 
-        if data_and_stats is None:
-            data, self.stats = load_dataset(norm_func=norm_func, max_data=max_data, data_type=data_type,
-                                            include_lanes=include_lanes, extra_features=extra_features,
-                                            y_norm_func=y_norm_func, **nf_kwargs)
-        else:
-            data, self.stats = data_and_stats
+        train_agent_pos = data[0]['agent_pos']
+        self.val_agent_pos = data[1]['agent_pos']
+        self.val_labels = data[1]['scene_idx']
+
+        # Normalize the data before _conv_data()
+        dataset_stats = {}
+        for i in range(2):
+            for k in [k for k in list(data[0].keys()) if k not in _UNUSED_KEYS]:
+                if k == 'p' and i == 0:
+                    y_start = 19 * 60 * 2
+                    dataset_stats['p1'] = kwargs if i == 0 else dataset_stats['p1']
+                    dataset_stats['p2'] = kwargs if i == 0 else dataset_stats['p2']
+
+                    y_data = data[i][k][:, y_start:].reshape([-1, 30, 60, 2])[:, :, 0, :].reshape([-1, 60]).copy()
+                    _, self.inv_norm_kwargs = self.y_norm_func(y_data, **kwargs)
+
+                    data[i][k][:, :y_start], dataset_stats['p1'] = self.norm_func(data[i][k][:, :y_start],
+                                                                                  **dataset_stats['p1'])
+                    data[i][k][:, y_start:], dataset_stats['p2'] = self.y_norm_func(data[i][k][:, y_start:],
+                                                                                    **dataset_stats['p2'])
+                else:
+                    dataset_stats[k] = kwargs if i == 0 else dataset_stats['p1' if k == 'p' else k]
+                    data[i][k], dataset_stats[k] = self.norm_func(data[i][k], **dataset_stats)
+
+        self.inv_norm_kwargs['inv'] = True
 
         data = self._conv_data(data)
 
-        self.train_x = data['train_x']
-        self.test_x = data['test_x']
-        self.val_x = data['val_x']
-        self.train_y = data['train_y']
-        self.test_y = data['test_y']
-        self.test_x_off = data['test_x_off']
-        self.test_pred_off = data['test_pred_off']
-        self.val_pred_off = data['val_pred_off']
-        self.val_labels = data['val_labels']
+        # In case there are multiple arrays for training data
+        if isinstance(data[0], (list, tuple)):
+            datas = data[0] + [data[1], train_agent_pos]
+            #*xs, self.train_y, self.test_y, _, self.test_agent_pos = tts(*datas, test_size=0.2, random_state=73254)
+            tx, tsx, tl, tsl, self.train_y, self.test_y, _, self.test_agent_pos = tts(*datas, test_size=0.2, random_state=73254)
+            self.train_x = [tx, tl]
+            self.test_x = [tsx, tsl]
+            #self.train_x, self.test_x = xs[::2], xs[1::2]
+        else:
+            self.train_x, self.test_x, self.train_y, self.test_y, _, self.test_agent_pos = \
+                tts(data[0], data[1], train_agent_pos, test_size=0.2)
+        self.val_x = data[2]
 
-        self.name = "%s_%s_%s_" % (norm_func, data_type, y_norm_func) + \
-                    ("all" if max_data is None else "%d" % max_data) + "_"
+        unnorm = self.y_norm_func(self.train_y[0], **self.inv_norm_kwargs)
 
-        self.model = "Load" if load_model else self._gen_model()
+        self.model = self.load() if load_model else self._gen_model()
 
     def _model_path(self):
-        return os.path.join(MODELS_PATH, self.__class__.__name__ + "_" + self.name + MODEL_EXT)
+        return os.path.join(MODELS_PATH, self.name + MODEL_EXT)
 
     def _gen_model(self):
         pass
 
     def _conv_data(self, data):
-        return data
+        """
+        Should return x, y, val_x
+        """
+        y_start = -30*60*2
+        y = data[0]['p'][:, y_start:].reshape([-1, 30, 60, 2])[:, :, 0, :].reshape([-1, 30 * 2])
+
+        for k in [k for k in ['p', 'v', 's'] if k in data[0]]:
+            data[0][k] = data[0][k][:, :y_start]
+
+        for i in range(2):
+            data[i] = np.concatenate([data[i][k] for k in list(data[i].keys()) if k not in _UNUSED_KEYS], axis=1)
+
+        return data[0], y, data[1]
 
     def _train_model(self):
-        pass
+        self.model.fit(self.train_x, self.train_y)
 
     def _predict(self, X):
         """
         Returns non-normalized predictions
         """
-        if isinstance(self.model, str):
-            self.model = self.load()
         return self.model.predict(X)
-
-    def _unroll_y(self, y, val=False, test=False):
-        ret = y.copy().reshape([y.shape[0], -1, 2])
-        ret[:, 0, :] += self.val_pred_off if val else self.test_x_off if test else self.test_pred_off
-        return np.cumsum(ret, axis=1).reshape([y.shape[0], -1])
 
     def pred_metrics(self):
         # Make the metrics for model output
@@ -91,8 +128,8 @@ class ForecastModel:
         rmse = _rmse(pred, self.test_y)
 
         # Undo the normalization and unroll
-        y = self._unroll_y(self.inv_y_norm_func(self.test_y))
-        pred = self._unroll_y(self.inv_y_norm_func(pred))
+        y = self.norm_func(self.test_y, **self.inv_norm_kwargs) + np.tile(self.test_agent_pos, 30)
+        pred = self.norm_func(pred, **self.inv_norm_kwargs) + np.tile(self.test_agent_pos, 30)
 
         # Make metrics for real-world output
         real_rmse = _rmse(pred, y)
@@ -139,7 +176,7 @@ class ForecastModel:
         self.pred_metrics()
 
     def _get_val_pred(self):
-        return self._unroll_y(self.inv_y_norm_func(self._predict(self.val_x)), val=True)
+        return self.norm_func(self._predict(self.val_x), **self.inv_norm_kwargs) + np.tile(self.val_agent_pos, 30)
 
     def compute_val(self):
         if not self._trained:
@@ -148,8 +185,7 @@ class ForecastModel:
         if self.best_val_pred is None:
             print("No previous best RMSE, doing val...")
             self.best_val_pred = self._get_val_pred()
-        name = self.__class__.__name__ + "_" + self.name
-        save_predictions(self.best_val_pred, name, self.val_labels)
+        save_predictions(self.best_val_pred, self.name, self.val_labels)
 
     def save(self):
         raise NotImplementedError()
